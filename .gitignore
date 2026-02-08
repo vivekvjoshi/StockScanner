@@ -1,15 +1,51 @@
-# Python Environment
-.venv/
-venv/
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# App Outputs
-plots/
-*.png
-scanner_results.csv
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
 
-# System
-.DS_Store
-.env
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Streamlit
 .streamlit/secrets.toml
+
+# Environment
+.env
+
+# Plots
+plots/
+
+# Test files
+test_*.py
+debug_*.py
+
+# OS
+.DS_Store
+Thumbs.db
