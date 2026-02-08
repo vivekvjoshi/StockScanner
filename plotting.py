@@ -4,45 +4,88 @@ import os
 
 def plot_pattern(df, ticker, pattern_details, filename):
     """
-    Plots the candlestick chart with pattern annotations.
+    Clean, minimal chart with just candlesticks and key levels
     """
     if not os.path.exists("plots"):
         os.makedirs("plots")
         
     path = f"plots/{filename}"
     
-    # Create pattern specific lines
-    addplots = []
+    # Only essential pattern lines
+    apds = []
     
-    if pattern_details['pattern'] == 'Cup and Handle':
-        # Pivot Line
-        pivot = pattern_details['pivot']
+    pattern_type = pattern_details.get('pattern', '')
+    
+    # Add ONLY the breakout/pivot line (most important)
+    pivot = pattern_details.get('pivot')
+    if pivot:
         pivot_line = [pivot] * len(df)
-        addplots.append(mpf.make_addplot(pivot_line, color='blue', linestyle='--'))
-        
-    elif pattern_details['pattern'] == 'Inverse Head and Shoulders':
-        # Neckline
-        neckline = pattern_details['neckline_price']
-        neck_line = [neckline] * len(df)
-        addplots.append(mpf.make_addplot(neck_line, color='orange', linestyle='--'))
-        
-        # Stop Loss
-        stop = pattern_details['stop_loss']
-        stop_line = [stop] * len(df)
-        addplots.append(mpf.make_addplot(stop_line, color='red', linestyle=':'))
-
-    # Custom Style
-    s = mpf.make_mpf_style(base_mpf_style='yahoo', rc={'font.size': 8})
+        apds.append(mpf.make_addplot(pivot_line, color='#00ff00', 
+                                     linestyle='--', width=2, alpha=0.8))
     
-    # Save fig
-    mpf.plot(
-        df, 
-        type='candle', 
-        style=s,
-        title=f"{ticker} - {pattern_details['pattern']}",
-        volume=True,
-        addplot=addplots,
-        savefig=dict(fname=path, dpi=100, bbox_inches='tight')
+    # Add stop loss (secondary)
+    stop = pattern_details.get('stop_loss')
+    if stop:
+        stop_line = [stop] * len(df)
+        apds.append(mpf.make_addplot(stop_line, color='#ff5252', 
+                                     linestyle=':', width=1.5, alpha=0.6))
+    
+    # Clean styling
+    mc = mpf.make_marketcolors(
+        up='#26a69a',
+        down='#ef5350',
+        edge='inherit',
+        wick={'up':'#26a69a', 'down':'#ef5350'},
+        volume={'up':'#26a69a', 'down':'#ef5350'}
     )
+    
+    s = mpf.make_mpf_style(
+        marketcolors=mc,
+        gridstyle=':',
+        gridcolor='#333333',
+        facecolor='#0e0e0e',
+        figcolor='#0e0e0e',
+        y_on_right=False
+    )
+    
+    # Simple title
+    score = pattern_details.get('score', 0)
+    status = pattern_details.get('status', '')
+    title = f"{ticker} - {pattern_type} | Score: {score}/100"
+    if status:
+        title += f" | {status}"
+    
+    # Create clean plot
+    fig, axes = mpf.plot(
+        df,
+        type='candle',
+        style=s,
+        addplot=apds if apds else None,
+        volume=True,
+        panel_ratios=(4, 1),
+        figsize=(12, 7),
+        title=dict(title=title, fontsize=14, color='#ffffff', weight='bold'),
+        ylabel='Price ($)',
+        ylabel_lower='Volume',
+        returnfig=True,
+        warn_too_much_data=len(df)+1
+    )
+    
+    # Minimal styling adjustments
+    ax_main = axes[0]
+    ax_vol = axes[1]
+    
+    # Clean up axes
+    for ax in [ax_main, ax_vol]:
+        ax.tick_params(colors='#cccccc', labelsize=9)
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#333333')
+    
+    fig.tight_layout()
+    fig.savefig(path, dpi=100, bbox_inches='tight', 
+                facecolor='#0e0e0e', edgecolor='none')
+    
+    import matplotlib.pyplot as plt
+    plt.close(fig)
     
     return path
