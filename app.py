@@ -350,20 +350,26 @@ if start_scan:
         # --- PHASE 1: Bulk Daily Scan (Fast) ---
         start_time = time.time()
         passed_tickers = []
-        chunk_size = 50 
+        
+        # Reduced chunk size to prevent hanging
+        chunk_size = 20 
         
         for i in range(0, len(tickers), chunk_size):
             chunk = tickers[i:i+chunk_size]
             progress.progress((i / len(tickers)) * 0.3)
-            status.write(f"Phase 1: Checking Trend... ({i}/{len(tickers)})")
+            status.write(f"Phase 1: Analyzing Batch {i}-{i+len(chunk)}/{len(tickers)}...")
             
             try:
-                data = yf.download(chunk, period="1y", interval="1d", group_by='ticker', progress=False, threads=True)
+                # threads=False prevents hanging on some systems
+                data = yf.download(chunk, period="1y", interval="1d", group_by='ticker', progress=False, threads=False)
                 
                 for ticker in chunk:
                     try:
                         if len(chunk) > 1:
-                            df_daily = data[ticker]
+                            if ticker in data.columns.levels[0]:
+                                df_daily = data[ticker]
+                            else:
+                                continue 
                         else:
                             df_daily = data 
                         
@@ -436,6 +442,13 @@ if 'scan_results' in st.session_state:
     # Cache Indicator
     mins_ago = int((time.time() - scan_time) / 60)
     st.info(f"⚡ Displaying cached results from {mins_ago} minutes ago.", icon="💾")
+    with st.expander("ℹ️ How Caching Works"):
+        st.write("""
+        To speed up performance and avoid re-scanning (which takes time), results are saved to a local cache file (`scan_cache.json`).
+        - **Expiry:** The cache is valid for **4 hours**.
+        - **Refresh:** Click the 'Force Clear' button to delete the cache and run a fresh scan immediately.
+        - **Persistence:** Results remain available even if you refresh the browser tab.
+        """)
     
     # Filter Matches based on current inputs
     filtered_matches = [m for m in matches if m['category'] in selected_cats and m['ai_score'] >= min_score]
@@ -529,3 +542,6 @@ if 'scan_results' in st.session_state:
 
     else:
         st.warning("No matches found with current filters.")
+
+st.divider()
+st.warning("⚠️ **DISCLAIMER: TRADE AT YOUR OWN RISK.** This tool is for informational purposes only and does not constitute financial advice. The patterns identified are probabilistic, not guaranteed. Validate all setups with your own analysis before trading.")
