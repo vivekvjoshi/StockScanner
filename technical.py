@@ -82,91 +82,72 @@ def find_cup_and_handle(df, spy_df=None):
     
     # ============================================================================
     # ADVANCED SCORING SYSTEM (0-100 points)
+    # Calibrated to be EXTREMELY STRICT (Avg score ~50)
     # ============================================================================
     
-    score = 50  # Base score
+    score = 25  # Lower Base score
     status = "Forming"
     
-    # FACTOR 1: Cup Depth Quality (0-20 points)
+    # FACTOR 1: Cup Depth Quality (0-15 points)
     # Ideal: 15-33% (Minervini's sweet spot)
     if 0.15 <= cup_depth_pct <= 0.33:
-        score += 20  # Perfect depth
+        score += 15  # Perfect depth
     elif 0.12 <= cup_depth_pct <= 0.40:
-        score += 15  # Good depth
-    elif 0.10 <= cup_depth_pct <= 0.50:
-        score += 10  # Acceptable
-    else:
-        score += 5   # Marginal
+        score += 10  # Good depth
     
-    # FACTOR 2: Rim Symmetry (0-15 points)
-    if 0.98 <= ratio <= 1.02:
-        score += 15  # Nearly perfect
-    elif 0.95 <= ratio <= 1.05:
-        score += 12  # Excellent
+    # FACTOR 2: Rim Symmetry (0-10 points)
+    if 0.95 <= ratio <= 1.05:
+        score += 10  # Excellent symmetry
     elif 0.90 <= ratio <= 1.10:
-        score += 10  # Good
-    elif 0.85 <= ratio <= 1.15:
-        score += 7   # Acceptable
-    else:
-        score += 3   # Poor
+        score += 5   # Good symmetry
     
-    # FACTOR 3: Handle Quality & Breakout Proximity (0-25 points)
+    # FACTOR 3: Handle Quality & Breakout Proximity (0-20 points)
     if bars_since_right > 0:
         handle_slice = lows[right_rim_idx:]
         handle_low = np.min(handle_slice)
         handle_depth_pct = 1.0 - (handle_low / right_rim_price)
         
-        # Reject if handle too deep
-        if handle_depth_pct > 0.22:
-            return False, f"Handle too deep ({handle_depth_pct*100:.1f}%)"
-        
         # Tighter handle = better
         if handle_depth_pct <= 0.08:
             score += 15  # VCP-like tight consolidation
         elif handle_depth_pct <= 0.12:
-            score += 12  # Good handle
-        elif handle_depth_pct <= 0.18:
-            score += 8   # Acceptable
-        else:
-            score += 4   # Deeper handle
-        
-        # Current price position
-        current_price = closes[-1]
-        
-        # Reject if too far below rim
-        if current_price < right_rim_price * 0.88:
-            return False, "Price rejected (too far below rim)"
+            score += 10  # Good handle
+        elif handle_depth_pct <= 0.15:
+            score += 5   # Acceptable
         
         # Breakout proximity bonus (0-10 points)
+        current_price = closes[-1]
         distance_pct = (right_rim_price - current_price) / right_rim_price
         
-        if distance_pct <= 0.02:  # Within 2%
+        # Check if price is above SMA50 for breakout confirmation
+        above_sma50 = True
+        if not pd.isna(df['SMA50'].iloc[-1]) and current_price < df['SMA50'].iloc[-1]:
+            above_sma50 = False
+
+        if distance_pct <= 0.02 and above_sma50:  # Within 2% and strictly uptrending
             status = "Breakout!"
             score += 10
-        elif distance_pct <= 0.05:  # Within 5%
+        elif distance_pct <= 0.05 and above_sma50:  # Within 5%
             status = "Near Pivot"
-            score += 8
-        elif distance_pct <= 0.08:  # Within 8%
-            status = "Approaching"
             score += 5
-        else:
-            score += 2
+        elif distance_pct <= 0.05:
+            # Near pivot but below SMA50? Unlikely but possible
+            status = "Weak Setup"
+            score -= 5
     
     # FACTOR 4: Volume Trend (0-10 points)
     # Volume should dry up in handle
-    if bars_since_right >= 10:
+    if bars_since_right >= 5:
         handle_vols = df['Volume'].iloc[right_rim_idx:]
-        if len(handle_vols) >= 10:
+        if len(handle_vols) >= 5:
             mid = len(handle_vols) // 2
             first_half_avg = handle_vols[:mid].mean()
             second_half_avg = handle_vols[mid:].mean()
             
-            if second_half_avg < first_half_avg * 0.8:
-                score += 10  # Volume drying up
+            if second_half_avg < first_half_avg * 0.7:
+                score += 10  # Volume drying up (Strong)
             elif second_half_avg < first_half_avg:
-                score += 6   # Volume declining
-            else:
-                score += 2
+                score += 5   # Volume declining
     
     # FACTOR 5: Trend Strength (0-10 points)
     current = df.iloc[-1]
@@ -181,14 +162,10 @@ def find_cup_and_handle(df, spy_df=None):
     reward = right_rim_price - cup_bottom_price  # Projected target
     rr_ratio = reward / risk if risk > 0 else 0
     
-    if rr_ratio >= 2.5:
+    if rr_ratio >= 3.0:
         score += 10
     elif rr_ratio >= 2.0:
-        score += 8
-    elif rr_ratio >= 1.5:
-        score += 6
-    else:
-        score += 3
+        score += 5
     
     # Cap at 100
     score = min(score, 100)
