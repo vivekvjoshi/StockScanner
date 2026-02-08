@@ -1,0 +1,15 @@
+# Python Environment
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# App Outputs
+plots/
+*.png
+scanner_results.csv
+
+# System
+.DS_Store
+.env
+.streamlit/secrets.toml
