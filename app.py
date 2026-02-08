@@ -228,7 +228,7 @@ if st.button("🚀 Scan High Probability Setups"):
                         
                         # Fallback: Use technical score if AI fails
                         if score == 0 or ai_result.get('verdict') == 'ERROR':
-                            score = details.get('score', 60)  # Use technical score
+                            score = potential_match.get('score', 60)  # Use technical score
                             ai_result = {
                                 'score': score,
                                 'reasoning': f"Technical Score: {score}/100 (AI unavailable)",
@@ -248,7 +248,7 @@ if st.button("🚀 Scan High Probability Setups"):
                             
                     except Exception as e:
                         # Fallback: Use technical score on exception
-                        score = details.get('score', 60)
+                        score = potential_match.get('score', 60)
                         potential_match['ai_score'] = score
                         potential_match['ai_reasoning'] = f"Technical Score (AI Error: {str(e)[:50]})"
                         potential_match['ai_summary'] = "Using technical pattern score only"
