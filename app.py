@@ -1,283 +1,312 @@
+from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import fundamentals
+from tradingview_screener import Query, Column
 import technical
-import scanner_plotting
+import plotting
 import os
-import ai_validator
-import streamlit.components.v1 as components
+import requests
+import json
+import base64
 
-st.set_page_config(page_title="Cup & Handle Scanner", layout="wide")
+# Load environment variables
+load_dotenv()
 
-st.title("📈 Trading Strategy Command Center")
-st.markdown("""
-This dashboard provides institutional-grade technical scans for **Cup & Handle** patterns and **Wheel Strategy** opportunities in SPDR ETFs.
-""")
+# Page Config
+st.set_page_config(page_title="High Prob Pattern Scanner", layout="wide", page_icon="🦅")
 
-tabs = st.tabs(["🏆 Cup & Handle Scanner", "💰 Wheel Strategy (ETFs)"])
+# --- OpenRouter Integration ---
+def get_ai_analysis(ticker, pattern_type, plot_path):
+    """
+    Sends the chart to OpenRouter (Claude-3.5-Sonnet recommended) for analysis.
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return "⚠️ OpenRouter API Key not found. Please set OPENROUTER_API_KEY in .env file."
 
-# Puter AI Status Banner
-st.success("✅ Institutional Puter AI Enabled — No Keys Required")
-st.info("💡 **Tip:** Ensure you are logged into [puter.com](https://puter.com) in this browser tab for seamless AI breakout analysis.")
-with tabs[0]:
-    st.header("🏆 Cup & Handle Pattern Scanner")
-    st.info("Institutional-grade scan for high-quality rounding bottoms with handles.")
+    # Encode image
+    with open(plot_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:8501", # Required by OpenRouter
+        "X-Title": "PatternScanner"
+    }
     
-    # Scanner Settings inside the tab
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        universe = st.selectbox("Scanner Universe", ["S&P 500", "Nasdaq 100", "Major ETFs & SPY/QQQ"], key="ch_universe")
-    with c2:
-        limit_options = [10, 25, 50, 100, 250, 500]
-        limit = st.select_slider("Number of Stocks to Scan", options=limit_options, value=25, key="ch_limit")
+    prompt = f"""
+    You are a professional technical analyst. I have identified a potential {pattern_type} on the 4H chart for {ticker}.
+    Please analyze the attached chart image paying close attention to:
+    1. The quality of the pattern structure (symmetry, depth).
+    2. Volume characteristics (is there volume expansion on breakout/right side?).
+    3. Key resistance/support levels.
     
-    run_ch_btn = st.button("🚀 Run Pattern Scan", type="primary", key="run_ch_button", use_container_width=True)
+    Return a valid JSON object with the following fields:
+    - "verdict": "BUY", "WAIT", or "IGNORE"
+    - "score": A number between 0 and 100 representing the probability of success.
+    - "reasoning": A 2-sentence explanation of why you assigned this score.
+    """
 
-    if run_ch_btn:
-        st.write(f"### Scanning {universe}...")
-        
-        status_text = st.empty()
-        progress_bar = st.progress(0)
-        
-        # Determine tickers based on selection
-        import fundamentals as fund
-        if universe == "S&P 500":
-            all_tickers = fund.get_sp500_tickers()
-        elif universe == "Nasdaq 100":
-            all_tickers = fund.get_nasdaq_tickers()
+    data = {
+        "model": "anthropic/claude-3.5-sonnet", # High vision capability
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{encoded_string}"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+        if response.status_code == 200:
+            content = response.json()['choices'][0]['message']['content']
+            # Clean up markdown code blocks if any
+            content = content.replace("```json", "").replace("```", "").strip()
+            return json.loads(content)
         else:
-            all_tickers = fund.get_spdr_tickers()
-            
-        tickers_to_scan = all_tickers[:limit]
-        
-        results = []
-        
-        # Placeholder for API key if needed for AI validation
-        api_key = os.getenv("PUTER_AI_API_KEY") # Or however you manage your API key
+            return {"score": 0, "reasoning": f"Error: {response.text}", "verdict": "ERROR"}
+    except Exception as e:
+        print(f"AI Req Error: {e}")
+        return {"score": 0, "reasoning": f"Request Failed: {e}", "verdict": "ERROR"}
 
-        for i, ticker in enumerate(tickers_to_scan):
-            progress_bar.progress((i + 1) / len(tickers_to_scan))
-            status_text.text(f"Checking {ticker} ({i+1}/{len(tickers_to_scan)})...")
+# --- TV Screener ---
+@st.cache_data(ttl=300)
+def get_screened_stocks():
+    """
+    Uses tradingview-screener to find liquid, uptrending stocks.
+    # Query for High Probability Candidates (S&P 500 Proxy + Trend + Volume)
+    # Re-introducing filters to increase "Win Probability" as requested.
+    """
+    q = Query().select('name', 'close', 'volume', 'market_cap_basic', 'relative_volume_10d_calc', 'change').where(
+        Column('market_cap_basic') > 15_000_000_000, 
+        Column('volume') > 500_000,
+        
+        # High Probability Filters:
+        Column('close') > Column('SMA200'), # In a long-term uptrend
+        # REMOVED: change > 0 (Handles can be red days)
+        # REMOVED: rel_vol > 1.0 (Handles often have low volume / VCP)
+    ).limit(300) # Scan top 300 candidates
+    
+    return q.get_scanner_data()
+
+# --- Fundamental Check ---
+def check_fundamentals(ticker):
+    """
+    checks detailed fundamentals using yfinance (Only when needed)
+    """
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        
+        # 1. Cash > Debt - REMOVED per user request
+        # total_cash = info.get('totalCash', 0)
+        # total_debt = info.get('totalDebt', 0)
+        # if total_debt > total_cash:
+        #    return False, f"Debt ({total_debt/1e9:.1f}B) > Cash"
             
-            passed_fund, fund_data = fund.check_fundamentals(ticker)
-            
-            if passed_fund:
-                name = fund_data.get('name', ticker)
-                earnings = fund_data.get('earnings', 'N/A')
-                sector = fund_data.get('sector', 'N/A')
-                
-                try:
-                    # Download data
-                    df = yf.download(ticker, period="2y", interval="1d", progress=False, multi_level_index=False)
-                    
-                    if df.empty or len(df) < 200:
-                        continue
-                    
-                    found, details = technical.find_cup_and_handle(df)
-                    
-                    if found:
-                        details['ticker'] = ticker
-                        
-                        # Generate Plot
-                        plot_path = scanner_plotting.plot_cup_and_handle(df, ticker, details)
-                        details['plot_path'] = plot_path
-                        
-                        # Add fundamental data
-                        details['name'] = name
-                        details['sector'] = sector
-                        details['earnings'] = earnings
-                        details['market_cap_B'] = round(fund_data.get('marketCap', 0) / 1e9, 1)
-                        details['pe_ratio'] = fund_data.get('trailingPE', 'N/A')
-                        
-                        # AI Verification
-                        if api_key and plot_path:
-                            status_text.text(f"🤖 Puter AI Analyzing chart for {ticker}...")
-                            ai_resp = ai_validator.analyze_chart(plot_path, api_key)
-                            details['ai_analysis'] = ai_resp
-                            
-                        results.append(details)
-                        
-                except Exception as e:
-                    # st.error(f"Error processing {ticker}: {e}") # For debugging
-                    pass
-            
-        progress_bar.empty()
-        status_text.empty()
-            
-        if results:
-            st.balloons()
-            st.write(f"### 🎉 Found {len(results)} Matches!")
-            
-            df_res = pd.DataFrame(results)
-            # Sort by RR Ratio (institutional benchmark)
-            if 'rr_ratio' in df_res.columns:
-                df_res = df_res.sort_values(by='rr_ratio', ascending=False)
-            
-            cols = ['ticker', 'name', 'earnings', 'sector', 'suggested_entry', 'stop_loss', 'target_price', 'rr_ratio']
-            cols = [c for c in cols if c in df_res.columns]
-            st.dataframe(df_res[cols], use_container_width=True)
-            
-            for res in df_res.to_dict('records'):
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    st.subheader(f"{res['ticker']}")
-                    st.info(f"Setting up for breakout")
-                    st.write(f"**Name:** {res.get('name', '')}")
-                    st.write(f"📅 **Earnings:** {res.get('earnings', 'N/A')}")
-                    st.markdown("#### 🎯 Trade Setup")
-                    c_enter, c_stop, c_tgt = st.columns(3)
-                    c_enter.metric("Entry", f"${res.get('suggested_entry', 0)}")
-                    c_stop.metric("Stop Loss", f"${res.get('stop_loss', 0)}")
-                    c_tgt.metric("Target", f"${res.get('target_price', 0)}")
-                    
-                    if 'plot_path' in res:
-                        st.divider()
-                        st.markdown("#### 🤖 Puter AI Institutional Verdict")
-                        # Call the new JS-based AI component
-                        ai_html = ai_validator.analyze_chart(res['plot_path'], res['ticker'])
-                        components.html(ai_html, height=180)
-                with c2:
-                    if res.get('plot_path') and os.path.exists(res['plot_path']):
-                        st.image(res['plot_path'], caption=f"{res['ticker']} Setup")
-                st.divider()
+        # 2. Growth
+        rev_growth = info.get('revenueGrowth', 0)
+        earn_growth = info.get('earningsGrowth', 0)
+        
+        if rev_growth <= 0 or earn_growth <= 0:
+             return False, "No Growth"
+             
+        return True, "Fundamentals Strong"
+        
+    except Exception:
+        return False, "Data Unavailable"
+
+# --- Main App ---
+st.title("🦅 Eagle Eye: High Probability Breakout Scanner")
+st.markdown("Scanning **S&P 500 / High Cap Leaders** for **Cup & Handle** / **Inv. H&S** patterns on the **4H Timeframe**.")
+
+if st.button("🚀 Scan High Probability Setups"):
+    debug_mode = st.checkbox("Show Debug Logs (Why stocks are failing)", value=True)
+    status = st.empty()
+    progress = st.progress(0)
+    
+    status.write("🔍 Querying TradingView for Strict Trend Template Stocks...")
+    try:
+        # 1. Get Universe from TV Screener (returns tuple: (count, dataframe))
+        total_count, results_df = get_screened_stocks()
+        
+        st.write(f"✅ Found {total_count} momentum candidates. Analyzing top {len(results_df)} with 4H Technicals & Fundamentals...")
+        
+        # Ticker column usually 'name' or 'ticker'
+        if 'name' in results_df.columns:
+            tickers = results_df['name'].tolist()
+        elif 'ticker' in results_df.columns:
+            tickers = results_df['ticker'].tolist()
+        elif 'symbol' in results_df.columns:
+             tickers = results_df['symbol'].tolist()
         else:
-            st.warning("No patterns found.")
-
-with tabs[1]:
-    st.header("💰 Wheel Strategy Command Center")
-    st.markdown("Find reliable stocks for selling Cash Secured Puts. Ideal for consistent income.")
-    
-    wheel_mode = st.radio("Scan Mode", ["Sector ETFs (SPDR)", "Broad Market Scan (<$30, Profitable)"], horizontal=True)
-    
-    import wheel
-    
-    if wheel_mode == "Sector ETFs (SPDR)":
-        run_wheel_btn = st.button("🚀 Scan SPDR ETFs", type="primary", key="run_wheel_etfs")
+            st.error(f"Cannot find ticker column. Available: {results_df.columns}")
+            st.stop()
         
-        if run_wheel_btn:
-            st.write("### Analyzing all SPDR Sector ETFs...")
-            wheel_status = st.empty()
-            wheel_progress = st.progress(0)
-            
-            tickers = wheel.SPDR_SECTORS
-            wheel_results = []
-            
-            for i, (ticker, name) in enumerate(tickers.items()):
-                wheel_status.text(f"Analyzing {ticker} ({name})...")
-                wheel_progress.progress((i + 1) / len(tickers))
-                
-                data = wheel.get_wheel_data(ticker, name)
-                if data:
-                    wheel_results.append(data)
-            
-            wheel_status.empty()
-            wheel_progress.empty()
-            
-            if wheel_results:
-                df_wheel = pd.DataFrame(wheel_results)
-                st.dataframe(df_wheel, use_container_width=True)
-                
-                st.write("### 🎯 Recommended Opportunities")
-                # Sort by RSI (Low to High - better entries)
-                df_wheel = df_wheel.sort_values(by="RSI", ascending=True)
-                
-                for _, row in df_wheel.iterrows():
-                    with st.expander(f"{row['Ticker']} - {row['Name']} ({row['Status']})", expanded=(row['RSI'] < 45)):
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Price", f"${row['Price']}")
-                        c2.metric("RSI (14)", row['RSI'])
-                        c3.metric("IV %", row['IV'])
-                        c4.metric("Div Yield", row['Yield'])
-                        
-                        # Add Puter AI Opinion
-                        ai_html = ai_validator.get_puter_ai_insight(row['Ticker'], analysis_type="text")
-                        components.html(ai_html, height=150)
-    
-    else:
-        # Broad Market Scan
-        st.info("🔍 Searching for stocks < $30 that have been profitable for at least 3 years and are in an uptrend.")
-        scan_limit = st.select_slider("Stocks to check (from S&P 500/Russell)", options=[50, 100, 250, 500], value=100)
+        matches = []
+        debug_logs = []
         
-        run_broad_btn = st.button("🚀 Start Institutional Wheel Scan", type="primary", key="run_broad_wheel")
-        
-        if run_broad_btn:
-            # Re-use fundamental logic but with new filters
-            status_text = st.empty()
-            progress_bar = st.progress(0)
+        for i, ticker in enumerate(tickers):
+            progress.progress((i+1)/len(tickers))
             
-            # Determine tickers based on selection
-            import fundamentals as fund
-            # For Broad Market Scan, we use the same universe setting if preferred, 
-            # but usually it's S&P 500 or Russell. Let's provide a local choice or use sidebar.
-            # Using S&P 500 as default base for broad scan unless changed.
-            all_tickers = fund.get_sp500_tickers()
+            # --- Quick Fundamental Check - DISABLED to focus on Price Action ---
+            # passed_fund, fund_msg = check_fundamentals(ticker)
+            # if not passed_fund:
+            #      if debug_mode and len(debug_logs) < 20: 
+            #          debug_logs.append(f"⚠️ {ticker}: Fundamental Weak - {fund_msg} (Proceeding)")
+                 
+            status.write(f"Analyzing {ticker} 4H Chart...")
             
-            tickers = all_tickers[:scan_limit] 
-            
-            wheel_results = []
-            
-            for i, ticker in enumerate(tickers):
-                progress = (i + 1) / len(tickers)
-                progress_bar.progress(progress)
-                status_text.text(f"Checking {ticker} ({i+1}/{len(tickers)})...")
+            try:
+                # 2. Get 4H Data
+                # Use yfinance only for plotting and deep technicals as requested
+                # Fetching 1 year of data to catch longer cup bases
+                df = yf.download(ticker, period="730d", interval="1h", progress=False) 
                 
-                try:
-                    t = yf.Ticker(ticker)
-                    info = t.info
-                    
-                    price = info.get('regularMarketPrice') or info.get('currentPrice', 1000)
-                    
-                    # Criteria 1: < $30
-                    if price >= 30:
-                        continue
-                        
-                    # Criteria 2: Profitable (3+ years)
-                    financials = t.financials
-                    if financials.empty or 'Net Income' not in financials.index:
-                        continue
-                    
-                    net_inc = financials.loc['Net Income']
-                    # Using iloc[:3] assuming the data is sorted by year descending (common in yfinance)
-                    if len(net_inc) < 3 or not (net_inc.iloc[:3] > 0).all():
-                        continue
-                        
-                    # Criteria 3: Uptrend (Price > 200MA)
-                    hist = t.history(period="1y")
-                    if len(hist) < 200: continue
-                    ma200 = hist['Close'].rolling(200).mean().iloc[-1]
-                    if price <= ma200:
-                        continue
-                        
-                    # If all passed, get full wheel data
-                    data = wheel.get_wheel_data(ticker, info.get('shortName', ticker))
-                    if data:
-                        wheel_results.append(data)
-                        
-                except:
+                if df.empty: 
+                    if debug_mode and len(debug_logs) < 10: debug_logs.append(f"❌ {ticker}: No Data Fetch")
                     continue
-            
-            status_text.empty()
-            progress_bar.empty()
-            
-            if wheel_results:
-                st.success(f"🎉 Found {len(wheel_results)} powerful opportunities!")
-                df_broad = pd.DataFrame(wheel_results)
-                # Sort by RSI ascending (best entries first)
-                df_broad = df_broad.sort_values(by="RSI", ascending=True)
                 
-                st.dataframe(df_broad, use_container_width=True)
+                # Resample to 4H
+                ohlc_dict = {
+                    'Open': 'first',
+                    'High': 'max',
+                    'Low': 'min',
+                    'Close': 'last',
+                    'Volume': 'sum'
+                }
                 
-                for _, row in df_broad.iterrows():
-                    with st.expander(f"{row['Ticker']} - {row['Name']} ({row['Status']})", expanded=(row['RSI'] < 45)):
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Price", f"${row['Price']}")
-                        c2.metric("RSI (14)", row['RSI'])
-                        c3.metric("IV %", row['IV'])
-                        c4.metric("Div Yield", row['Yield'])
+                if isinstance(df.columns, pd.MultiIndex):
+                     df.columns = df.columns.get_level_values(0)
                         
-                        # Add Puter AI Opinion for each Wheel candidate
-                        ai_html = ai_validator.get_puter_ai_insight(row['Ticker'], analysis_type="text")
-                        components.html(ai_html, height=150)
-            else:
-                st.warning("No stocks found matching the criteria in this batch.")
+                df_4h = df.resample('4h').agg(ohlc_dict).dropna()
+                
+                if len(df_4h) < 50: 
+                    if debug_mode and len(debug_logs) < 10: debug_logs.append(f"❌ {ticker}: Not Enough Bars ({len(df_4h)})")
+                    continue 
+                
+                # 3. Check Patterns
+                found_ch, details_ch = technical.find_cup_and_handle(df_4h)
+                found_ihs, details_ihs = technical.find_inverse_head_and_shoulders(df_4h)
+                
+                potential_match = None
+                
+                if found_ch:
+                    plot_path = plotting.plot_pattern(df_4h, ticker, details_ch, f"{ticker}_ch.png")
+                    details_ch['ticker'] = ticker
+                    details_ch['plot'] = plot_path
+                    potential_match = details_ch
+                elif found_ihs:
+                    plot_path = plotting.plot_pattern(df_4h, ticker, details_ihs, f"{ticker}_ihs.png")
+                    details_ihs['ticker'] = ticker
+                    details_ihs['plot'] = plot_path
+                    potential_match = details_ihs
+                else:
+                    if debug_mode and len(debug_logs) < 10:
+                        # details_ch is the error message if found_ch is False
+                        validation_msg = details_ch if isinstance(details_ch, str) else "No Pattern"
+                        debug_logs.append(f"❌ {ticker}: Tech Fail - {validation_msg}")
+
+                if potential_match:
+                    # 4. AI Verification (Automatic) - OPTIONAL
+                    status.write(f"🤖 AI Verifying {ticker}...")
+                    
+                    try:
+                        ai_result = get_ai_analysis(ticker, potential_match['pattern'], potential_match['plot'])
+                        score = ai_result.get('score', 0)
+                        
+                        # Fallback: Use technical score if AI fails
+                        if score == 0 or ai_result.get('verdict') == 'ERROR':
+                            score = details.get('score', 60)  # Use technical score
+                            ai_result = {
+                                'score': score,
+                                'reasoning': f"Technical Score: {score}/100 (AI unavailable)",
+                                'summary': "Using technical pattern score only",
+                                'verdict': "TECHNICAL"
+                            }
+                            if debug_mode:
+                                debug_logs.append(f"⚠️ {ticker}: AI failed, using technical score {score}")
+                        
+                        potential_match['ai_score'] = score
+                        potential_match['ai_reasoning'] = ai_result.get('reasoning', "N/A")
+                        potential_match['ai_summary'] = ai_result.get('summary', ai_result.get('reasoning', "N/A"))
+                        potential_match['ai_verdict'] = ai_result.get('verdict', "N/A")
+                        
+                        if score > 75:
+                            matches.append(potential_match)
+                            
+                    except Exception as e:
+                        # Fallback: Use technical score on exception
+                        score = details.get('score', 60)
+                        potential_match['ai_score'] = score
+                        potential_match['ai_reasoning'] = f"Technical Score (AI Error: {str(e)[:50]})"
+                        potential_match['ai_summary'] = "Using technical pattern score only"
+                        potential_match['ai_verdict'] = "TECHNICAL"
+                        
+                        if score > 75:
+                            matches.append(potential_match)
+                        
+                        if debug_mode:
+                            debug_logs.append(f"❌ {ticker}: AI Exception - {str(e)[:80]}")
+                    
+            except Exception as e:
+                if debug_mode and len(debug_logs) < 20:
+                    debug_logs.append(f"❌ {ticker}: Processing Error - {str(e)[:80]}")
+
+                
+        status.empty()
+        progress.empty()
+        
+        if matches:
+            st.success(f"🎉 Found {len(matches)} High Probability Setups (Score > 75)!")
+            
+            # Sort by Score Descending
+            matches.sort(key=lambda x: x['ai_score'], reverse=True)
+            
+            for m in matches:
+                with st.expander(f"🏆 {m['ticker']} - {m['pattern']} (Score: {m['ai_score']}/100)", expanded=True):
+                    c1, c2 = st.columns([2, 1])
+                    
+                    with c1:
+                        st.image(m['plot'])
+                        st.markdown(f"**🤖 AI Summary:** {m['ai_summary']}")
+                        
+                    with c2:
+                        st.subheader("🎯 Trade Setup")
+                        st.metric("AI Score", f"{m['ai_score']}/100", delta=m['ai_verdict'])
+                        
+                        entry_price = m.get('pivot', m.get('neckline_price')) 
+                        if entry_price:
+                            st.metric("Entry", f"${entry_price:.2f}")
+                        
+                        c_stop, c_tgt = st.columns(2)
+                        c_stop.metric("Stop", f"${m.get('stop_loss', 0):.2f}")
+                        c_tgt.metric("Target", f"${m.get('target_price', 0):.2f}")
+                        
+                        risk = entry_price - m.get('stop_loss', 0)
+                        reward = m.get('target_price', 0) - entry_price
+                        if risk > 0:
+                            rr = reward / risk
+                            st.write(f"**R:R:** 1:{rr:.1f}")
+
+        else:
+            st.warning("No setups > 75 Score found. Try lowering standards or checking manual matches.")
+            
+        if debug_mode and debug_logs:
+            with st.expander("🛠️ Debug Logs (First 10 Failures)"):
+                for log in debug_logs:
+                    st.write(log)
+            
+    except Exception as master_e:
+        st.error(f"Scanner Error: {master_e}")

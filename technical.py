@@ -1,148 +1,200 @@
 import pandas as pd
 import numpy as np
 from scipy.signal import argrelextrema
+from scipy.stats import linregress
 
-def find_cup_and_handle(df, back_days=365):
+def calculate_mas(df):
+    df['SMA50'] = df['Close'].rolling(window=50).mean()
+    df['SMA200'] = df['Close'].rolling(window=200).mean()
+    df['VolSMA50'] = df['Volume'].rolling(window=50).mean()
+    return df
+
+def check_trend_template(df):
     """
-    Analyzes the last 'back_days' of data to find a forming Cup and Handle.
-    
-    Args:
-        df (pd.DataFrame): DataFrame with 'Close' column and DateTime index.
-        back_days (int): How far back to look for the pattern start.
-        
-    Returns:
-        tuple: (bool, dict) -> (Found Pattern?, Details)
+    Minervini-style Trend Template (Simplified for 4H/Daily usage)
     """
-    if len(df) < back_days // 2:
-        return False, "Not enough data"
-        
-    # Focus on the relevant window
-    recent = df.iloc[-back_days:].copy()
-    prices = recent['Close'].values
-    dates = recent.index
+    if len(df) < 200: return False, "Not enough data"
     
-    # 1. Identify Local Maxima (Peaks)
-    # Order=5 means looking for peaks that are max within 5 points on each side
+    current = df.iloc[-1]
+    
+    # 1. Moving Averages
+    if not (current['Close'] > current['SMA50'] > current['SMA200']):
+        return False, "Not in Uptrend (Close > 50 > 200)"
+        
+    return True, "Trend OK"
+
+def check_volume_breakout(df):
+    """
+    Breakout Volume > 1.4x (40% above) 50-day Avg Vol
+    """
+    current_vol = df['Volume'].iloc[-1]
+    avg_vol = df['VolSMA50'].iloc[-1]
+    if pd.isna(avg_vol): return False
+    return current_vol > (avg_vol * 1.40)
+
+def find_cup_and_handle(df, spy_df=None):
+    """
+    Fuzzy Heuristic Cup & Handle Detection.
+    Finds: High (Left) -> Low (Bottom) -> High (Right) -> Consolidation (Handle)
+    """
+    # Need at least ~60 bars
+    if len(df) < 60: return False, f"Not enough data ({len(df)})"
+    
+    df = calculate_mas(df)
+    
+    closes = df['Close'].values
+    highs = df['High'].values
+    lows = df['Low'].values
+    
+    # 1. Identify Potential Right Rim (Recent High in last ~45 bars)
+    # We look for a high point that acts as the pivot
+    lookback_right = min(60, len(closes))
+    
+    # Find max in last 60 bars (approx 2-4 weeks 4H)
+    right_rim_rel_idx = np.argmax(highs[-lookback_right:])
+    right_rim_idx = len(highs) - lookback_right + right_rim_rel_idx
+    right_rim_price = highs[right_rim_idx]
+    
+    # 2. Check Handle (Price since Right Rim)
+    bars_since_right = len(closes) - 1 - right_rim_idx
+    
+    # If right rim is too old (> 45 bars), pattern fails
+    if bars_since_right > 45:
+        return False, f"Right rim too old ({bars_since_right} bars)"
+        
+    # 3. Identify Left Rim (High point BEFORE Right Rim)
+    # Search window: from 250 bars ago up to Right Rim - 8 bars
+    search_end = right_rim_idx - 8
+    
+    if search_end < 20: 
+        return False, "Pattern too short"
+    
+    search_start = max(0, search_end - 250)
+    
+    # Find highest point in that window
+    left_rim_idx = np.argmax(highs[search_start:search_end]) + search_start
+    left_rim_price = highs[left_rim_idx]
+    
+    # 4. Check Rim Alignment
+    # Left Rim should be somewhat close to Right Rim (0.75 to 1.35)
+    ratio = left_rim_price / right_rim_price
+    if not (0.75 <= ratio <= 1.35):
+        return False, f"Rim mismatch {left_rim_price:.2f}/{right_rim_price:.2f}"
+        
+    # 5. Check for Cup Bottom (Lowest point between Rims)
+    cup_slice = lows[left_rim_idx:right_rim_idx]
+    if len(cup_slice) < 5: return False, "Cup too narrow"
+    
+    cup_bottom_price = np.min(cup_slice)
+    cup_depth_pct = 1.0 - (cup_bottom_price / max(left_rim_price, right_rim_price))
+    
+    # Depth Check: 8% to 60% (Broad range)
+    if not (0.08 <= cup_depth_pct <= 0.60):
+        return False, f"Depth invalid ({cup_depth_pct*100:.1f}%)"
+        
+    # 6. Handle Validation
+    score = 60
+    status = "Forming"
+    
+    if bars_since_right > 0:
+        handle_slice = lows[right_rim_idx:]
+        handle_low = np.min(handle_slice)
+        
+        # Max handle depth relative to Right Rim
+        handle_depth_pct = 1.0 - (handle_low / right_rim_price)
+        
+        # Handle shouldn't drop more than 22% usually
+        if handle_depth_pct > 0.22: 
+             return False, f"Handle too deep ({handle_depth_pct*100:.1f}%)"
+             
+        # Check if we are near breakout (current price vs Right Rim)
+        current_price = closes[-1]
+        
+        # Must be in upper part of handle (within 12% of rim)
+        # If it dropped too much, it's failed handle
+        if current_price < right_rim_price * 0.88:
+             return False, "Price rejected (too far below rim)"
+             
+        if current_price >= right_rim_price * 0.98:
+            status = "Breakout!"
+            score += 20
+        elif current_price >= right_rim_price * 0.95:
+             status = "Near Pivot"
+             score += 10
+             
+    # Bonus points
+    if 0.9 <= ratio <= 1.1: score += 10 # Symmetry
+
+    pattern_details = {
+        "pattern": "Cup & Handle (Fuzzy)",
+        "pivot": float(right_rim_price), 
+        "stop_loss": float(cup_bottom_price),
+        "target_price": float(right_rim_price + (right_rim_price - cup_bottom_price)),
+        "left_rim": float(left_rim_price),
+        "right_rim": float(right_rim_price),
+        "bottom": float(cup_bottom_price),
+        "score": score,
+        "status": status,
+        "ai_score": score # Default
+    }
+    
+    return True, pattern_details
+
+def find_inverse_head_and_shoulders(df):
+    """
+    Simplified IHS Detection.
+    """
+    if len(df) < 60: return False, "Not enough data"
+    
+    prices = df['Close'].values
+    # Using order=5 for local troughs
     order = 5
-    max_idx = argrelextrema(prices, np.greater, order=order)[0]
+    min_idxs = argrelextrema(prices, np.less, order=order)[0]
     
-    if len(max_idx) < 2:
-        return False, "Not enough peaks"
+    if len(min_idxs) < 3: return False, "No troughs"
+    
+    relevant_min_idxs = min_idxs[min_idxs > (len(prices) - 250)] # Look back 1 year
+    
+    for i in range(len(relevant_min_idxs) - 2):
+        l_idx = relevant_min_idxs[i]
+        h_idx = relevant_min_idxs[i+1]
+        r_idx = relevant_min_idxs[i+2]
         
-    # We need to find the Right Rim and Left Rim
-    # The Right Rim should be relatively recent (within ~1-8 weeks perhaps?) 
-    # but not *right now* otherwise where is the handle?
-    # Actually, if the handle is forming, the Right Rim is a past peak.
-    
-    # Let's iterate backwards through potential Right Rims
-    # The latest peak could be the Right Rim
-    
-    potential_patterns = []
-    
-    # Look at the last 3 peaks as candidates for Right Rim
-    for r_idx in max_idx[::-1][:3]:
-        right_rim_price = prices[r_idx]
-        right_rim_date = dates[r_idx]
+        ls_price, head_price, rs_price = prices[l_idx], prices[h_idx], prices[r_idx]
         
-        # Days since Right Rim
-        days_since_right_rim = (dates[-1] - right_rim_date).days
+        # Structure: Head lowest
+        if not (head_price < ls_price and head_price < rs_price): continue
         
-        # Handle Check Part 1: Time
-        # Detect handle forming: Needs to be recent, e.g., 5 to 50 days (approx 1-10 weeks)
-        if not (5 <= days_since_right_rim <= 60):
-            continue
+        # Symmetry: Shoulders within 20%
+        if abs(ls_price - rs_price) / rs_price > 0.20: continue
             
-        # Handle Check Part 2: Price currently forming handle
-        # Current price should be LOWER than Right Rim (retracing)
-        current_price = prices[-1]
-        if current_price >= right_rim_price:
-             # It broke out or is above. We want "forming handle" which usually implies retrace.
-             continue
+        # Depth: Head significantly lower
+        if head_price >= (ls_price+rs_price)/2 * 0.98: continue
+        
+        # Neckline
+        neck_left_idx = np.argmax(prices[l_idx:h_idx]) + l_idx
+        neck_right_idx = np.argmax(prices[h_idx:r_idx]) + h_idx
+        
+        neckline_price = (prices[neck_left_idx] + prices[neck_right_idx]) / 2
+        
+        # Breakout
+        current = prices[-1]
+        
+        if current >= neckline_price * 0.95:
+             # Calculate score
+             vol_breakout = check_volume_breakout(df)
+             score = 60
+             if vol_breakout: score += 20
              
-        # Find a matching Left Rim
-        # Iterate backwards from Right Rim
-        for l_idx in max_idx:
-            if l_idx >= r_idx:
-                break
-                
-            left_rim_price = prices[l_idx]
-            left_rim_date = dates[l_idx]
-            
-            # Duration Check: Cup needs to be meaningful (e.g., > 1 month, < 1 year)
-            cup_duration = (right_rim_date - left_rim_date).days
-            if not (30 <= cup_duration <= 365):
-                continue
-                
-            # Height Check: Rims should be somewhat level-ish (e.g., within 20% of each other?)
-            # Usually Cup and Handle rims are close, but strict equality isn't seen in wild.
-            if not (0.8 <= left_rim_price / right_rim_price <= 1.2):
-                continue
-                
-            # Verify "Cup" Shape: Low point between rims
-            # Get slice between rims
-            cup_slice_prices = prices[l_idx:r_idx]
-            cup_bottom_price = np.min(cup_slice_prices)
-            cup_bottom_idx = np.argmin(cup_slice_prices) + l_idx # global index
-            
-            # Depth Calculation
-            cup_depth = right_rim_price - cup_bottom_price
-            cup_depth_pct = cup_depth / right_rim_price
-            
-            # Reject if too shallow (< 5%?) or too deep (> 75%?)
-            if not (0.05 <= cup_depth_pct <= 0.75):
-                continue
-            
-            # Check mid-point of bottom. We don't want a "V" shape right at one end.
-            # Bottom should be somewhat in the middle third timeframe ideally?
-            # Or just ensure it's not the Rim index itself (guaranteed by slice)
-            # A simple rule: verify the bottom is "deep enough" compared to the trend.
+             return True, {
+                 "pattern": "Inv Head/Shoulders",
+                 "status": "Breakout" if current > neckline_price else "Forming",
+                 "pivot": neckline_price,
+                 "stop_loss": rs_price,
+                 "target_price": neckline_price + (neckline_price - head_price),
+                 "score": score,
+                 "volume_breakout": vol_breakout,
+                 "ai_score": score
+             }
              
-            # HANDLE CHECK: "Halfway forming"
-            # We already know current_price < right_rim_price
-            # Check how deep the handle has gone.
-            handle_drop = right_rim_price - current_price
-            
-            # Handle shouldn't drop more than ~50% of the cup depth
-            if handle_drop > (0.5 * cup_depth):
-                # Dropped too much, pattern failed
-                continue
-                
-            # Logic: "Halfway" ? 
-            # If handle drop is very small (< 2%), it just started.
-            # If handle drop is significant (e.g. > 20% of cup depth), it's forming well.
-            # This is subjective, but "forming" implies it exists.
-            
-            # --- Calculate Trade Parameters ---
-            # 1. Entry (Pivot): The Right Rim High
-            entry_price = right_rim_price
-            
-            # 2. Stop Loss: The lowest point of the handle so far
-            # We need the slice from right rim to end
-            handle_slice = prices[r_idx:]
-            handle_low = np.min(handle_slice)
-            stop_loss = handle_low
-            
-            # 3. Profit Target: Measured Move (Depth of Cup) added to Entry
-            # Classic target is 1x the depth
-            target_price = entry_price + cup_depth
-            
-            # Risk/Reward Ratio (Approximate)
-            risk = entry_price - stop_loss
-            reward = target_price - entry_price
-            rr_ratio = round(reward / risk, 1) if risk > 0 else 0
-            
-            return True, {
-                "pattern": "Cup and Handle (Forming)",
-                "left_rim": (str(left_rim_date.date()), round(left_rim_price, 2)),
-                "right_rim": (str(right_rim_date.date()), round(right_rim_price, 2)),
-                "cup_bottom": round(cup_bottom_price, 2),
-                "cup_depth_pct": round(cup_depth_pct * 100, 1),
-                "handle_duration_days": days_since_right_rim,
-                "handle_retracement_pct": round(retracement_pct, 1),
-                "suggested_entry": round(entry_price, 2),
-                "stop_loss": round(stop_loss, 2),
-                "target_price": round(target_price, 2),
-                "rr_ratio": rr_ratio
-            }
-
-    return False, "No valid pattern found"
+    return False, "No IHS"
