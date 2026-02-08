@@ -125,7 +125,7 @@ def find_cup_and_handle(df, spy_df=None):
             above_sma50 = False
 
         if distance_pct <= 0.02 and above_sma50:  # Within 2% and strictly uptrending
-            status = "Breakout!"
+            status = "Breakout"
             score += 10
         elif distance_pct <= 0.05 and above_sma50:  # Within 5%
             status = "Near Pivot"

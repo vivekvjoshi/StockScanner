@@ -339,6 +339,13 @@ with st.sidebar:
         help=cat_help
     )
     
+    selected_statuses = st.multiselect(
+        "Pattern Status",
+        ["Breakout", "Near Pivot", "Forming", "Weak Setup"],
+        default=["Breakout", "Near Pivot"],
+        help="**Breakout**: Price breaking pivot.\n**Near Pivot**: Within 5% of pivot.\n**Forming**: Setup still developing."
+    )
+    
     # Dynamic Info on Scan Scope
     if not "Silver" in selected_cats and not "Bronze" in selected_cats:
         if "Platinum" in selected_cats and not "Gold" in selected_cats:
@@ -494,7 +501,7 @@ if 'scan_results' in st.session_state:
     scan_time = st.session_state.get('scan_time', time.time())
     
     # Filter
-    filtered = [m for m in matches if m['category'] in selected_cats and m['ai_score'] >= min_score]
+    filtered = [m for m in matches if m['category'] in selected_cats and m['ai_score'] >= min_score and m['status'] in selected_statuses]
 
     # --- Metrics Header ---
     m1, m2, m3, m4 = st.columns(4)
@@ -509,7 +516,7 @@ if 'scan_results' in st.session_state:
         st.metric("Data Age", f"{mins}m ago")
     
     def sort_key(x):
-        status_priority = 0 if x.get('status') == "Breakout!" else 1
+        status_priority = 0 if x.get('status') == "Breakout" else 1
         return (status_priority, -x['ai_score'])
     filtered.sort(key=sort_key)
     
