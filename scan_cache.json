@@ -1,0 +1,11 @@
+{
+    "timestamp": 1770525824.039223,
+    "matches": [
+        {
+            "pattern": "Inv Head/Shoulders",
+            "status": "Breakout",
+            "pivot": 227.73500061035156,
+            "stop_loss": 218.6300048828125,
+            "target_price": 263.3000030517578,
+            "score": 70,
+            "volume_breakout":
