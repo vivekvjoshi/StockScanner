@@ -47,52 +47,40 @@ def load_cache():
     except Exception:
         return None, None
 
-# --- OpenRouter Integration ---
+# --- OpenRouter Integration (Optional) ---
 def get_ai_analysis(ticker, pattern_type, plot_path):
     """
-    Sends the chart to OpenRouter (Claude-3.5-Sonnet recommended) for analysis.
+    Sends the chart to OpenRouter (Claude-3.5-Sonnet) for backend automated scoring.
+    Only runs if API Key is present.
     """
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        return "⚠️ OpenRouter API Key not found. Please set OPENROUTER_API_KEY in .env file."
+        return None 
 
     # Encode image
-    with open(plot_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+    try:
+        with open(plot_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+    except:
+        return {"score": 0, "reasoning": "Image Load Error", "verdict": "ERROR"}
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8501", # Required by OpenRouter
+        "HTTP-Referer": "http://localhost:8501", 
         "X-Title": "PatternScanner"
     }
     
-    prompt = f"""
-    You are a professional technical analyst. I have identified a potential {pattern_type} on the 4H chart for {ticker}.
-    Please analyze the attached chart image paying close attention to:
-    1. The quality of the pattern structure (symmetry, depth).
-    2. Volume characteristics (is there volume expansion on breakout/right side?).
-    3. Key resistance/support levels.
-    
-    Return a valid JSON object with the following fields:
-    - "verdict": "BUY", "WAIT", or "IGNORE"
-    - "score": A number between 0 and 100 representing the probability of success.
-    - "reasoning": A 2-sentence explanation of why you assigned this score.
-    """
+    prompt = f"Analyze chart for {ticker}. Pattern: {pattern_type}. Return JSON: {{'verdict': 'BUY'/'WAIT', 'score': 0-100, 'reasoning': 'brief text'}}."
 
     data = {
-        "model": "anthropic/claude-3.5-sonnet", # High vision capability
+        "model": "anthropic/claude-3.5-sonnet",
         "messages": [
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded_string}"
-                        }
-                    }
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded_string}"}}
                 ]
             }
         ]
@@ -102,14 +90,12 @@ def get_ai_analysis(ticker, pattern_type, plot_path):
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
         if response.status_code == 200:
             content = response.json()['choices'][0]['message']['content']
-            # Clean up markdown code blocks if any
             content = content.replace("```json", "").replace("```", "").strip()
             return json.loads(content)
         else:
-            return {"score": 0, "reasoning": f"Error: {response.text}", "verdict": "ERROR"}
+            return None
     except Exception as e:
-        print(f"AI Req Error: {e}")
-        return {"score": 0, "reasoning": f"Request Failed: {e}", "verdict": "ERROR"}
+        return None
 
 # --- TV Screener ---
 @st.cache_data(ttl=300)
@@ -200,8 +186,7 @@ def categorize_fundamentals(ticker):
 
 def process_ticker(ticker, debug_mode=True):
     """
-    Process a single ticker: Download data, check patterns, and verify with AI.
-    Returns a dict with results to be handled by the main thread.
+    Process a single ticker: Download data, check patterns.
     """
     logs = []
     try:
@@ -230,25 +215,37 @@ def process_ticker(ticker, debug_mode=True):
             return {'ticker': ticker, 'match': None, 'logs': [f"❌ {ticker}: Not Enough Bars ({len(df_4h)})"], 'error': "Not Enough Bars"}
         
         # 3. Check Patterns
-        found_ch, details_ch = technical.find_cup_and_handle(df_4h)
-        found_ihs, details_ihs = technical.find_inverse_head_and_shoulders(df_4h)
+        matches = []
         
-        potential_match = None
+        # Run all scanners
+        check_funcs = [
+            technical.find_cup_and_handle,
+            technical.find_inverse_head_and_shoulders,
+            technical.find_bull_flag,
+            technical.find_volatility_contraction
+        ]
         
-        if found_ch:
-            plot_path = plotting.plot_pattern(df_4h, ticker, details_ch, f"{ticker}_ch.png")
-            details_ch['ticker'] = ticker
-            details_ch['plot'] = plot_path
-            potential_match = details_ch
-        elif found_ihs:
-            plot_path = plotting.plot_pattern(df_4h, ticker, details_ihs, f"{ticker}_ihs.png")
-            details_ihs['ticker'] = ticker
-            details_ihs['plot'] = plot_path
-            potential_match = details_ihs
-        else:
-            # details_ch is the error message if found_ch is False
-            validation_msg = details_ch if isinstance(details_ch, str) else "No Pattern"
-            return {'ticker': ticker, 'match': None, 'logs': [f"❌ {ticker}: Tech Fail - {validation_msg}"], 'error': validation_msg}
+        for func in check_funcs:
+            try:
+                found, details = func(df_4h)
+                if found:
+                    matches.append(details)
+            except Exception as e:
+                logs.append(f"⚠️ {ticker}: {func.__name__} error: {e}")
+
+        if not matches:
+            return {'ticker': ticker, 'match': None, 'logs': [f"❌ {ticker}: No Patterns Found"], 'error': "No Patterns"}
+
+        # Select best match based on score
+        best_match = max(matches, key=lambda x: x['score'])
+        
+        # Generate Plot
+        safe_pattern_name = best_match['pattern'].replace(' ', '_').replace('/', '')
+        plot_path = plotting.plot_pattern(df_4h, ticker, best_match, f"{ticker}_{safe_pattern_name}.png")
+        best_match['ticker'] = ticker
+        best_match['plot'] = plot_path
+        
+        potential_match = best_match
 
         if potential_match:
             # 4. Get Fundamentals (Only for matches)
@@ -256,41 +253,24 @@ def process_ticker(ticker, debug_mode=True):
             potential_match['category'] = cat
             potential_match['cat_reason'] = cat_reason
             
-            # 5. AI Verification (Automatic)
+            # 5. Populate Default AI Fields (Technical Only)
+            potential_match['ai_score'] = potential_match['score']
+            potential_match['ai_reasoning'] = "Technical Analysis Only"
+            potential_match['ai_summary'] = "AI not enabled (Add OpenRouter Key to enable)"
+            potential_match['ai_verdict'] = "TECHNICAL"
+            
+            # Optional: Try Backend AI if Key Exists
             try:
                 ai_result = get_ai_analysis(ticker, potential_match['pattern'], potential_match['plot'])
-                score = ai_result.get('score', 0)
-                
-                # Fallback: Use technical score if AI fails
-                if score == 0 or ai_result.get('verdict') == 'ERROR':
-                    score = potential_match.get('score', 60)  # Use technical score
-                    ai_result = {
-                        'score': score,
-                        'reasoning': f"Technical Score: {score}/100 (AI unavailable)",
-                        'summary': "Using technical pattern score only",
-                        'verdict': "TECHNICAL"
-                    }
-                    logs.append(f"⚠️ {ticker}: AI failed, using technical score {score}")
-                
-                potential_match['ai_score'] = score
-                potential_match['ai_reasoning'] = ai_result.get('reasoning', "N/A")
-                potential_match['ai_summary'] = ai_result.get('summary', ai_result.get('reasoning', "N/A"))
-                potential_match['ai_verdict'] = ai_result.get('verdict', "N/A")
-                
-                return {'ticker': ticker, 'match': potential_match, 'logs': logs, 'error': None}
-                    
-            except Exception as e:
-                # Fallback: Use technical score on exception
-                score = potential_match.get('score', 60)
-                potential_match['ai_score'] = score
-                potential_match['ai_reasoning'] = f"Technical Score (AI Error: {str(e)[:50]})"
-                potential_match['ai_summary'] = "Using technical pattern score only"
-                potential_match['ai_verdict'] = "TECHNICAL"
-                
-                msg = f"❌ {ticker}: AI Exception - {str(e)[:80]}"
-                logs.append(msg)
-                
-                return {'ticker': ticker, 'match': potential_match, 'logs': logs, 'error': None}
+                if ai_result:
+                    potential_match['ai_score'] = ai_result.get('score', potential_match['score'])
+                    potential_match['ai_reasoning'] = ai_result.get('reasoning', "AI Verified")
+                    potential_match['ai_summary'] = ai_result.get('reasoning', "AI Verified")
+                    potential_match['ai_verdict'] = ai_result.get('verdict', "VERIFIED")
+            except:
+                pass
+
+            return {'ticker': ticker, 'match': potential_match, 'logs': logs, 'error': None}
             
     except Exception as e:
         return {'ticker': ticker, 'match': None, 'logs': [f"❌ {ticker}: Processing Error - {str(e)[:80]}"], 'error': str(e)}
@@ -302,29 +282,140 @@ st.set_page_config(page_title="Eagle Eye Scanner", layout="wide", page_icon="�
 # --- CSS Styles ---
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Manrope', sans-serif;
+        background-color: #f8fafc;
+        color: #1e293b;
+    }
+
+    /* Titles */
+    h1, h2, h3 {
+        font-family: 'Manrope', sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        color: #0f172a;
+    }
+
+    /* Buttons */
     .stButton>button {
         width: 100%;
-        border-radius: 5px;
-        font-weight: bold;
+        border-radius: 12px;
+        font-weight: 700;
+        border: none;
+        padding: 0.75rem 1rem;
+        transition: all 0.2s;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        text-align: center;
+    
+    /* Primary Button (Scan) */
+    .stButton>button[kind="primary"] {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: white;
+    }
+    .stButton>button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.4);
+    }
+
+    /* Secondary Button (Reset) */
+    .stButton>button[kind="secondary"] {
+        background-color: white;
+        color: #64748b;
+        border: 1px solid #e2e8f0;
+    }
+    .stButton>button[kind="secondary"]:hover {
+        border-color: #cbd5e1;
+        background-color: #f1f5f9;
+        color: #334155;
+    }
+
+    /* Metric Cards */
+    div[data-testid="stMetric"] {
+        background-color: white;
+        padding: 1rem;
+        border-radius: 12px;
+        border: 1px solid #f1f5f9;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+        transition: all 0.2s ease-in-out;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        border-color: #e2e8f0;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: #0f172a;
+    }
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #f1f5f9;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        background-color: white;
+        border-radius: 8px;
+        border: 1px solid #f1f5f9;
+        font-weight: 600;
+        color: #334155;
+    }
+    
+    /* Tables */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #f1f5f9;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    /* Custom Header Style */
+    .header-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 0;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .header-title {
+        font-size: 1.875rem;
+        font-weight: 800;
+        color: #0f172a;
+        letter-spacing: -0.025em;
+    }
+    .header-subtitle {
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #10b981;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # --- Sidebar Controls ---
 with st.sidebar:
-    st.title("🦅 Eagle Eye")
+    st.markdown("<h2 style='text-align: center; color: #10b981;'>🦅 ScanPro</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: 12px; font-weight: bold; color: #94a3b8; letter-spacing: 0.1em; text-transform: uppercase;'>Risk-Adjusted Engine</p>", unsafe_allow_html=True)
     st.markdown("---")
     
     st.subheader("⚙️ Scanner Settings")
-    
-    min_score = st.slider("Min AI Score", 0, 100, 70, help="Filter results by proprietary 'Eagle Eye' score.")
+    if not os.getenv("OPENROUTER_API_KEY"):
+         st.info("💡 **Tip:** Add `OPENROUTER_API_KEY` to .env to enable AI verification.")
+
+    min_score = st.slider("Min Pattern Score", 0, 100, 60, help="Filter results by pattern quality.")
     
     cat_help = """
     **Strict Filtering Logic:**
@@ -339,6 +430,12 @@ with st.sidebar:
         help=cat_help
     )
     
+    selected_patterns = st.multiselect(
+        "Pattern Type",
+        ["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base"],
+        default=["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base"]
+    )
+
     selected_statuses = st.multiselect(
         "Pattern Status",
         ["Breakout", "Near Pivot", "Forming", "Weak Setup"],
@@ -369,8 +466,17 @@ with st.sidebar:
     st.caption("v2.1 | Powered by Claude 3.5 Sonnet")
 
 # --- Main Content ---
-st.title("High Probability Breakout Scanner")
-st.markdown("**Identifying Cup & Handle / Inv. Head & Shoulders patterns on 4H Timeframe.**")
+st.markdown("""
+    <div class="header-container">
+        <div>
+            <div class="header-title">Market Scanner</div>
+            <div class="header-subtitle">High Probability Setups • 4H Timeframe</div>
+        </div>
+        <div>
+            <span style="background: #ecfdf5; color: #10b981; padding: 0.5rem 1rem; border-radius: 9999px; font-weight: 700; font-size: 0.75rem;">LIVE MODE</span>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
 # Handle Cache Reset
 if clear_cache:
@@ -501,7 +607,14 @@ if 'scan_results' in st.session_state:
     scan_time = st.session_state.get('scan_time', time.time())
     
     # Filter
-    filtered = [m for m in matches if m['category'] in selected_cats and m['ai_score'] >= min_score and m['status'] in selected_statuses]
+    # Filter
+    filtered = [
+        m for m in matches 
+        if m['category'] in selected_cats 
+        and m['ai_score'] >= min_score 
+        and m['status'] in selected_statuses
+        and m['pattern'] in selected_patterns
+    ]
 
     # --- Metrics Header ---
     m1, m2, m3, m4 = st.columns(4)
@@ -515,6 +628,8 @@ if 'scan_results' in st.session_state:
         mins = int((time.time() - scan_time) / 60)
         st.metric("Data Age", f"{mins}m ago")
     
+    st.caption("ℹ️ Displaying candidates based on technical pattern matching.")
+
     def sort_key(x):
         status_priority = 0 if x.get('status') == "Breakout" else 1
         return (status_priority, -x['ai_score'])
@@ -557,7 +672,7 @@ if 'scan_results' in st.session_state:
                 hide_index=True,
                 column_config={
                     "Category": st.column_config.TextColumn("Category", width="medium"),
-                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
+                    "Score": st.column_config.ProgressColumn("Tech Score", min_value=0, max_value=100, format="%d", help="Technical Pattern Quality (0-100)"),
                     "R:R": st.column_config.NumberColumn("R:R", format="1:%.1f"),
                     "Entry": st.column_config.NumberColumn("Entry", format="$%.2f"),
                     "Stop": st.column_config.NumberColumn("Stop", format="$%.2f"),
@@ -579,112 +694,15 @@ if 'scan_results' in st.session_state:
                         st.image(m['plot'])
                     with c2:
                         st.markdown(f"### {m['ticker']}")
-                        st.caption(m['cat_reason'])
-                        st.info(m['ai_summary'])
+                        st.caption(f"{m['pattern']} • {m['status']}")
+                        
                         st.metric("Entry Trigger", f"${m.get('pivot',0):.2f}")
                         st.metric("Stop Loss", f"${m.get('stop_loss',0):.2f}")
+                        
+                        if m.get('ai_verdict') == 'VERIFIED':
+                             st.success(f"🤖 **AI Analysis:** {m.get('ai_reasoning')}")
+                        else:
+                             st.info(f"💡 **Pattern Note:** {m.get('ai_summary')}")
 
 st.divider()
 st.warning("⚠️ **DISCLAIMER:** Trading involves risk. Technical analysis is probabilistic. Always verify with your own due diligence.")
-def get_ai_analysis(ticker, pattern_type, plot_path):
-    """
-    Sends the chart to OpenRouter (Claude-3.5-Sonnet recommended) for analysis.
-    """
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        return "⚠️ OpenRouter API Key not found. Please set OPENROUTER_API_KEY in .env file."
-
-    # Encode image
-    with open(plot_path, "rb") as image_file:
-        encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8501", # Required by OpenRouter
-        "X-Title": "PatternScanner"
-    }
-    
-    prompt = f"""
-    You are a professional technical analyst. I have identified a potential {pattern_type} on the 4H chart for {ticker}.
-    Please analyze the attached chart image paying close attention to:
-    1. The quality of the pattern structure (symmetry, depth).
-    2. Volume characteristics (is there volume expansion on breakout/right side?).
-    3. Key resistance/support levels.
-    
-    Return a valid JSON object with the following fields:
-    - "verdict": "BUY", "WAIT", or "IGNORE"
-    - "score": A number between 0 and 100 representing the probability of success.
-    - "reasoning": A 2-sentence explanation of why you assigned this score.
-    """
-
-    data = {
-        "model": "anthropic/claude-3.5-sonnet", # High vision capability
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{encoded_string}"
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-    
-    try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-        if response.status_code == 200:
-            content = response.json()['choices'][0]['message']['content']
-            # Clean up markdown code blocks if any
-            content = content.replace("```json", "").replace("```", "").strip()
-            return json.loads(content)
-        else:
-            return {"score": 0, "reasoning": f"Error: {response.text}", "verdict": "ERROR"}
-    except Exception as e:
-        print(f"AI Req Error: {e}")
-        return {"score": 0, "reasoning": f"Request Failed: {e}", "verdict": "ERROR"}
-
-# --- TV Screener ---
-@st.cache_data(ttl=300)
-def get_screened_stocks(selected_cats=None):
-    """
-    Uses tradingview-screener to find liquid, uptrending stocks.
-    Dynamically adjusts filters based on selected categories to reduce scan time.
-    """
-    # Default Strictness (Low)
-    min_mkt_cap = 15_000_000_000
-    min_volume = 500_000
-    
-    # If selected_cats provided, adjust filters upstream
-    if selected_cats:
-        # If user ONLY wants Platinum/Gold, we can be stricter upstream
-        has_bronze = "Bronze" in selected_cats
-        has_silver = "Silver" in selected_cats
-        has_gold = "Gold" in selected_cats
-        has_platinum = "Platinum" in selected_cats
-        
-        if not has_bronze and not has_silver:
-            if has_platinum and not has_gold:
-                # STRICTEST: Platinum Only
-                min_mkt_cap = 50_000_000_000 # Only Giants
-            elif has_platinum or has_gold:
-                # STRICT: Platinum/Gold
-                min_mkt_cap = 30_000_000_000
-
-    q = Query().select('name', 'close', 'volume', 'market_cap_basic', 'relative_volume_10d_calc', 'change').where(
-        Column('market_cap_basic') > min_mkt_cap, 
-        Column('volume') > min_volume,
-        Column('close') > Column('SMA200'), # Long-term uptrend
-    ).limit(300)
-    
-    return q.get_scanner_data()
-
-
-
-# --- OpenRouter Integration ---
-

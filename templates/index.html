@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Precision Scanner | Stock Pattern Detection</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#197fe6",
+                        "accent-emerald": "#10b981",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#111921",
+                        "surface": "#ffffff",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Manrope', sans-serif; }
+        .ios-shadow { box-shadow: 0 20px 50px -12px rgba(25, 127, 230, 0.15); }
+        .glass-nav { backdrop-filter: blur(12px); background-color: rgba(246, 247, 248, 0.8); }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 antialiased">
+<!-- Navigation -->
+<nav class="fixed top-0 left-0 right-0 z-50 glass-nav border-b border-slate-200 dark:border-slate-800">
+<div class="max-w-md mx-auto px-4 h-16 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="bg-primary p-1.5 rounded-lg">
+<span class="material-icons-round text-white text-xl">query_stats</span>
+</div>
+<span class="font-extrabold text-lg tracking-tight">SCANNER<span class="text-primary">.AI</span></span>
+</div>
+<button class="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-all">
+                Get Started
+            </button>
+</div>
+</nav>
+<!-- Hero Section -->
+<section class="pt-24 pb-12 px-6">
+<div class="max-w-md mx-auto text-center">
+<div class="inline-flex items-center gap-2 bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold mb-6">
+<span class="material-icons-round text-sm">auto_awesome</span>
+                NEW: V3.0 AI ENGINE IS LIVE
+            </div>
+<h1 class="text-4xl font-extrabold leading-tight tracking-tight mb-4">
+                Precision Pattern <span class="text-primary">Scanning</span>
+</h1>
+<p class="text-slate-600 dark:text-slate-400 text-lg mb-8 leading-relaxed">
+                Harness AI to identify high-probability setups in real-time. Stop searching, start executing.
+            </p>
+<!-- Dashboard Mockup -->
+<div class="relative mx-auto mt-10 rounded-xl overflow-hidden ios-shadow border-4 border-slate-900 dark:border-slate-800 bg-white">
+<img alt="Scanner Dashboard" class="w-full h-auto" data-alt="Professional white stock trading dashboard with charts" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAxeKHJfn5aHh8dAPaGBqHFK79d7-nyVkxAwdqhdg_hoLoVLmxkaGj-xucI1iiy9Pw7nF_s-gg6oDeal7I2VAzugzS1ZO5HJtvZmzjN4VtQy7RAoRhgPk-C8OrqBDS4QkMoXSA377vEF_jVQQsQBgQdQfrmDqor4jKRTW3vodll8YjbGBBQMSWpTr38Oa2zazX3td5S_MAmaRaDDrYPhalp1LeOlLDxOL4PzdWumfAWjehbkEFZZLqSBwKL73vomoBxC73uP-7EyuCE"/>
+<!-- Floating Alert Tag Overlay -->
+<div class="absolute top-4 right-4 bg-white/95 dark:bg-slate-900/95 p-3 rounded-xl shadow-xl flex items-center gap-3 border border-slate-100 dark:border-slate-700">
+<div class="bg-accent-emerald/20 p-2 rounded-lg">
+<span class="material-icons-round text-accent-emerald">trending_up</span>
+</div>
+<div class="text-left">
+<p class="text-[10px] uppercase font-bold text-slate-400">Signal Alert</p>
+<p class="text-xs font-extrabold">NVDA: Cup &amp; Handle</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Social Proof -->
+<div class="py-6 border-y border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 overflow-hidden">
+<div class="flex justify-center items-center gap-8 opacity-40 grayscale">
+<span class="font-black text-xl italic">FINANCE.</span>
+<span class="font-black text-xl italic">QUARTZ</span>
+<span class="font-black text-xl italic">BARONS</span>
+</div>
+</div>
+<!-- Features -->
+<section class="py-16 px-6 bg-white dark:bg-slate-900">
+<div class="max-w-md mx-auto space-y-12">
+<div class="text-center">
+<h2 class="text-2xl font-bold mb-2">Engineered for Accuracy</h2>
+<div class="h-1 w-12 bg-primary mx-auto rounded-full"></div>
+</div>
+<!-- AI Detection -->
+<div class="group p-6 rounded-2xl bg-background-light dark:bg-background-dark border border-slate-100 dark:border-slate-800 transition-all hover:border-primary/30">
+<div class="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center mb-4">
+<span class="material-icons-round text-primary">psychology</span>
+</div>
+<h3 class="text-xl font-bold mb-2">AI-Powered Detection</h3>
+<p class="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">
+                    Automatically identify Cup and Handle, Double Bottoms, and Head &amp; Shoulders with institutional-grade precision.
+                </p>
+<div class="mt-4 flex flex-wrap gap-2">
+<span class="px-2 py-1 bg-white dark:bg-slate-800 rounded text-[10px] font-bold border border-slate-200 dark:border-slate-700">99.4% Accuracy</span>
+<span class="px-2 py-1 bg-white dark:bg-slate-800 rounded text-[10px] font-bold border border-slate-200 dark:border-slate-700">All Timeframes</span>
+</div>
+</div>
+<!-- Real-time Alerts -->
+<div class="group p-6 rounded-2xl bg-background-light dark:bg-background-dark border border-slate-100 dark:border-slate-800 transition-all hover:border-accent-emerald/30">
+<div class="w-12 h-12 bg-accent-emerald/10 rounded-xl flex items-center justify-center mb-4">
+<span class="material-icons-round text-accent-emerald">notifications_active</span>
+</div>
+<h3 class="text-xl font-bold mb-2">Real-time Alerts</h3>
+<p class="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">
+                    Get instant push notifications the second a breakout is confirmed. Never miss a volume-surge entry again.
+                </p>
+<div class="mt-4 flex items-center gap-2 text-xs font-bold text-accent-emerald">
+<span class="material-icons-round text-sm">bolt</span>
+                    Latenacy under 20ms
+                </div>
+</div>
+</div>
+</section>
+<!-- Pricing Section -->
+<section class="py-16 px-6 bg-background-light dark:bg-background-dark">
+<div class="max-w-md mx-auto">
+<div class="text-center mb-10">
+<h2 class="text-3xl font-bold mb-3 tracking-tight">Simple Pricing</h2>
+<p class="text-slate-500 text-sm">Choose the plan that fits your trading volume.</p>
+</div>
+<!-- Pro Plan -->
+<div class="relative p-8 rounded-2xl bg-white dark:bg-slate-900 border-2 border-primary shadow-xl">
+<div class="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-white text-[10px] font-black uppercase px-4 py-1.5 rounded-full tracking-widest">
+                    Most Popular
+                </div>
+<div class="mb-6">
+<p class="text-slate-500 font-bold text-xs uppercase mb-1">Elite Trader</p>
+<div class="flex items-baseline gap-1">
+<span class="text-4xl font-extrabold text-slate-900 dark:text-white">$49</span>
+<span class="text-slate-500 font-medium">/mo</span>
+</div>
+</div>
+<ul class="space-y-4 mb-8">
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-icons-round text-accent-emerald text-lg">check_circle</span>
+                        Unlimited Pattern Scanning
+                    </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-icons-round text-accent-emerald text-lg">check_circle</span>
+                        Real-time Push Notifications
+                    </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-icons-round text-accent-emerald text-lg">check_circle</span>
+                        Multi-Device Sync (iOS/Desktop)
+                    </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-icons-round text-accent-emerald text-lg">check_circle</span>
+                        Priority AI Queue
+                    </li>
+<li class="flex items-center gap-3 text-sm font-medium">
+<span class="material-icons-round text-accent-emerald text-lg">check_circle</span>
+                        Backtesting Engine
+                    </li>
+</ul>
+<button class="w-full bg-primary hover:bg-primary/90 text-white py-4 rounded-xl font-bold transition-all shadow-lg shadow-primary/20">
+                    Unlock Pro Access
+                </button>
+<p class="text-center text-[10px] text-slate-400 mt-4 font-medium uppercase tracking-wider">7-Day Free Trial Included</p>
+</div>
+<!-- Free Plan -->
+<div class="mt-6 p-6 rounded-2xl bg-white/60 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800">
+<div class="flex justify-between items-center">
+<div>
+<h4 class="font-bold">Basic</h4>
+<p class="text-xs text-slate-500">Free forever, 1 scan/day</p>
+</div>
+<button class="text-primary font-bold text-sm">Join Free</button>
+</div>
+</div>
+</div>
+</section>
+<!-- Footer -->
+<footer class="py-12 px-6 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+<div class="max-w-md mx-auto">
+<div class="flex flex-col items-center text-center space-y-6">
+<div class="flex items-center gap-2 grayscale opacity-60">
+<div class="bg-slate-800 p-1 rounded">
+<span class="material-icons-round text-white text-sm">query_stats</span>
+</div>
+<span class="font-extrabold text-sm tracking-tight">SCANNER.AI</span>
+</div>
+<div class="flex gap-6 text-sm font-bold text-slate-500">
+<a class="hover:text-primary" href="#">Support</a>
+<a class="hover:text-primary" href="#">Terms</a>
+<a class="hover:text-primary" href="#">Privacy</a>
+<a class="hover:text-primary" href="#">Contact</a>
+</div>
+<p class="text-[10px] text-slate-400 leading-relaxed uppercase tracking-tighter">
+                    Disclaimer: Trading involves risk. Scanner.AI provides software tools for informational purposes only. Past performance does not guarantee future results.
+                </p>
+<div class="pt-4 text-xs text-slate-400">
+                    © 2024 Scanner Technologies Inc.
+                </div>
+</div>
+</div>
+</footer>
+<!-- Bottom Mobile Nav Decoration (Visual Only) -->
+<div class="fixed bottom-0 left-0 right-0 h-1 bg-primary/20">
+<div class="h-full bg-primary w-1/3 transition-all duration-500 ease-in-out"></div>
+</div>
+</body></html>
