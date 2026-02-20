@@ -454,11 +454,11 @@ with st.sidebar:
 
     st.markdown("---")
     
-    col_scan, col_reset = st.columns(2)
+    col_scan, col_reset = st.columns([1, 1])
     with col_scan:
-        start_scan = st.button("🚀 Run Scan", type="primary", use_container_width=True)
+        start_scan = st.button("🚀 Run", type="primary", use_container_width=True, help="Run Market Scanner")
     with col_reset:
-        clear_cache = st.button("🗑️ Reset Cache", use_container_width=True)
+        clear_cache = st.button("🗑️ Clear", use_container_width=True, help="Clear cached data")
         
     debug_mode = st.checkbox("Show Debug Logs", value=True)
     
