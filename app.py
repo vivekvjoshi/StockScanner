@@ -99,7 +99,7 @@ def get_ai_analysis(ticker, pattern_type, plot_path):
 
 # --- TV Screener ---
 @st.cache_data(ttl=300)
-def get_screened_stocks(selected_cats=None):
+def get_screened_stocks(selected_cats=None, include_etfs=True):
     """
     Uses tradingview-screener to find liquid, uptrending stocks.
     Dynamically adjusts filters based on selected categories to reduce scan time.
@@ -124,19 +124,50 @@ def get_screened_stocks(selected_cats=None):
                 # STRICT: Platinum/Gold
                 min_mkt_cap = 30_000_000_000
 
-    q = Query().select('name', 'close', 'volume', 'market_cap_basic', 'relative_volume_10d_calc', 'change').where(
+    # 1. Get Normal Stocks
+    q_stocks = Query().select('name', 'close', 'volume', 'market_cap_basic', 'relative_volume_10d_calc', 'change').where(
         Column('market_cap_basic') > min_mkt_cap, 
         Column('volume') > min_volume,
         Column('close') > Column('SMA200'), # Long-term uptrend
     ).limit(300)
     
-    return q.get_scanner_data()
+    count_s, df_stocks = q_stocks.get_scanner_data()
+    
+    if include_etfs:
+        # 2. Get Spyder ETFs (No Market Cap filter)
+        spyder_etfs = ['XLU', 'XLE', 'XLF', 'XLK', 'XLV', 'XLP', 'XLY', 'XLB', 'XLI', 'XLRE', 'XLC', 'SPY', 'QQQ', 'DIA', 'IWM']
+        q_etfs = Query().select('name', 'close', 'volume', 'market_cap_basic', 'relative_volume_10d_calc', 'change').where(
+            Column('name').isin(spyder_etfs),
+            Column('close') > Column('SMA200')
+        )
+        
+        try:
+            count_e, df_etfs = q_etfs.get_scanner_data()
+            # Combine
+            # Using pd.concat instead of append
+            if count_s > 0 and count_e > 0:
+                df_combined = pd.concat([df_stocks, df_etfs], ignore_index=True)
+                return count_s + count_e, df_combined
+            elif count_e > 0:
+                return count_e, df_etfs
+            elif count_s > 0:
+                return count_s, df_stocks
+            else:
+                return 0, pd.DataFrame()
+        except Exception as e:
+            return count_s, df_stocks
+    else:
+        return count_s, df_stocks
 
 # --- Fundamental Analysis ---
 def categorize_fundamentals(ticker):
     """
     Categorizes stock into Platinum, Gold, Silver, Bronze based on growth/quality.
     """
+    spyder_etfs = ['XLU', 'XLE', 'XLF', 'XLK', 'XLV', 'XLP', 'XLY', 'XLB', 'XLI', 'XLRE', 'XLC', 'SPY', 'QQQ', 'DIA', 'IWM']
+    if ticker in spyder_etfs:
+        return "ETF", "Major Market ETF"
+
     try:
         t = yf.Ticker(ticker)
         info = t.info
@@ -422,11 +453,12 @@ with st.sidebar:
     - 💎 **Platinum:** Market Cap > $50B (Elite Leaders)
     - 🥇 **Gold:** Market Cap > $30B (Strong Large Caps)
     - 🥈 **Silver+:** Market Cap > $15B (Broad Search)
+    - 📈 **ETF:** Major Market ETFs (No Market Cap Filter)
     """
     selected_cats = st.multiselect(
         "Fundamental Focus", 
-        ["Platinum", "Gold", "Silver", "Bronze"], 
-        default=["Platinum", "Gold", "Silver"], 
+        ["Platinum", "Gold", "Silver", "Bronze", "ETF"], 
+        default=["Platinum", "Gold", "Silver", "ETF"], 
         help=cat_help
     )
     
@@ -442,6 +474,8 @@ with st.sidebar:
         default=["Breakout", "Near Pivot"],
         help="**Breakout**: Price breaking pivot.\n**Near Pivot**: Within 5% of pivot.\n**Forming**: Setup still developing."
     )
+    
+    include_etfs = st.checkbox("Include Core Sector ETFs", value=True, help="Scan major sector ETFs like XLU, XLK, SPY regardless of market cap.")
     
     # Dynamic Info on Scan Scope
     if not "Silver" in selected_cats and not "Bronze" in selected_cats:
@@ -503,7 +537,7 @@ if start_scan:
         try:
             # Phase 1
             status.write("🔍 Phase 1: Fetching Universe & filtering for Uptrends...")
-            total_count, results_df = get_screened_stocks(selected_cats)
+            total_count, results_df = get_screened_stocks(selected_cats, include_etfs)
             
             if 'name' in results_df.columns:
                 tickers = results_df['name'].tolist()
@@ -533,7 +567,7 @@ if start_scan:
                     for ticker in chunk:
                         try:
                             # Handle data structure
-                            if len(chunk) > 1:
+                            if isinstance(data.columns, pd.MultiIndex):
                                 if ticker in data.columns.levels[0]:
                                     df_daily = data[ticker]
                                 else: continue
@@ -562,29 +596,25 @@ if start_scan:
             
             matches = []
             debug_logs = []
-            max_workers = 8
+            completed = 0
             
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_ticker = {executor.submit(process_ticker, ticker, debug_mode): ticker for ticker in passed_tickers}
-                completed = 0
+            # Fetch sequentially to bypass yfinance thread-safety bug (identical prices cross-polluting)
+            for ticker in passed_tickers:
+                completed += 1
                 
-                for future in as_completed(future_to_ticker):
-                    completed += 1
-                    ticker = future_to_ticker[future]
+                prog = 0.3 + ((completed / len(passed_tickers)) * 0.7)
+                bar.progress(min(prog, 1.0))
+                
+                try:
+                    res = process_ticker(ticker, debug_mode)
+                    if res['logs'] and debug_mode: 
+                         debug_logs.extend(res['logs'])
                     
-                    prog = 0.3 + ((completed / len(passed_tickers)) * 0.7)
-                    bar.progress(min(prog, 1.0))
-                    
-                    try:
-                        res = future.result()
-                        if res['logs'] and debug_mode: 
-                             debug_logs.extend(res['logs'])
-                        
-                        if res['match']:
-                            matches.append(res['match'])
-                            st.toast(f"Found {res['match']['category']} Setup: {ticker}", icon="🔥")
-                    except Exception as exc:
-                        if debug_mode: debug_logs.append(f"Error {ticker}: {exc}")
+                    if res['match']:
+                        matches.append(res['match'])
+                        st.toast(f"Found {res['match']['category']} Setup: {ticker}", icon="🔥")
+                except Exception as exc:
+                    if debug_mode: debug_logs.append(f"Error {ticker}: {exc}")
             
             bar.empty()
             status.update(label="✅ Scan Complete!", state="complete", expanded=False)
@@ -685,7 +715,7 @@ if 'scan_results' in st.session_state:
             
         with tab_cards:
             for m in filtered:
-                cat_colors = {"Platinum": "#e5e4e2", "Gold": "#ffd700", "Silver": "#c0c0c0", "Bronze": "#cd7f32"}
+                cat_colors = {"Platinum": "#e5e4e2", "Gold": "#ffd700", "Silver": "#c0c0c0", "Bronze": "#cd7f32", "ETF": "#8fbaff"}
                 c_color = cat_colors.get(m['category'], "#eee")
                 
                 with st.expander(f"{m['ticker']} | {m['category']} | Score: {m['ai_score']}", expanded=True):
