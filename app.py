@@ -253,7 +253,9 @@ def process_ticker(ticker, debug_mode=True):
             technical.find_cup_and_handle,
             technical.find_inverse_head_and_shoulders,
             technical.find_bull_flag,
-            technical.find_volatility_contraction
+            technical.find_volatility_contraction,
+            technical.find_ascending_triangle,
+            technical.find_double_bottom,
         ]
         
         for func in check_funcs:
@@ -464,8 +466,8 @@ with st.sidebar:
     
     selected_patterns = st.multiselect(
         "Pattern Type",
-        ["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base"],
-        default=["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base"]
+        ["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base", "Ascending Triangle", "Double Bottom"],
+        default=["Cup & Handle", "Inv H&S", "Bull Flag", "VCP / Flat Base", "Ascending Triangle", "Double Bottom"]
     )
 
     selected_statuses = st.multiselect(
